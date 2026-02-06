@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desk Setup Simulator (Iso Ver.)</title>
+    <style>
+        body {
+            background-color: #222; /* ゲーマーっぽく暗い背景 */
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 2px solid #555;
+            background-color: #333; /* 床の背景色 */
+            border-radius: 4px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            cursor: crosshair; /* 十字カーソル */
+        }
+        .controls {
+            margin-top: 10px;
+            padding: 10px;
+            background: #444;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🖥️ My Desk Setup (Alpha)</h1>
+    <canvas id="isoCanvas" width="800" height="600"></canvas>
+    
+    <div class="controls">
+        <p>まだ操作はできません。コード内の座標を変えると机が動きます。</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('isoCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // === 設定値 ===
+        const GRID_SIZE = 10;       // グリッドのマス目 (10x10)
+        const TILE_WIDTH = 60;      // タイル1枚の横幅 (ピクセル)
+        const TILE_HEIGHT = 30;     // タイル1枚の縦幅 (ピクセル)
+        
+        // Canvasの中央を原点(0,0)にするためのオフセット（ずらし量）
+        const ORIGIN_X = canvas.width / 2;
+        const ORIGIN_Y = 150; // 少し上に配置
+
+        // 机を置く位置（グリッド座標）★ここを変えると場所が変わる！
+        let deskX = 0;
+        let deskY = 8;
+
+        // ==========================================
+        // 📐 核心：座標変換関数 (Iso -> Screen)
+        // ==========================================
+        // グリッド上の座標(x, y, z)を受け取り、
+        // Canvas上の描画座標{x, y}を返す魔法の関数
+        function toScreen(gridX, gridY, gridZ = 0) {
+            const screenX = ORIGIN_X + (gridX - gridY) * (TILE_WIDTH / 2);
+            const screenY = ORIGIN_Y + (gridX + gridY) * (TILE_HEIGHT / 2) - (gridZ * TILE_HEIGHT);
+            return { x: screenX, y: screenY };
+        }
+
+        // ==========================================
+        // 🎨 描画関数群
+        // ==========================================
+
+        // 1枚のタイル（床）を描く
+        function drawTile(gx, gy) {
+            // タイルの4隅の座標を計算
+            const top = toScreen(gx, gy, 0);
+            const right = toScreen(gx + 1, gy, 0);
+            const bottom = toScreen(gx + 1, gy + 1, 0);
+            const left = toScreen(gx, gy + 1, 0);
+
+            ctx.beginPath();
+            ctx.moveTo(top.x, top.y);
+            ctx.lineTo(right.x, right.y);
+            ctx.lineTo(bottom.x, bottom.y);
+            ctx.lineTo(left.x, left.y);
+            ctx.closePath();
+
+            // 色設定（チェッカー柄にして分かりやすくする）
+            ctx.fillStyle = (gx + gy) % 2 === 0 ? '#555' : '#444';
+            ctx.fill();
+            ctx.strokeStyle = '#666'; // 枠線
+            ctx.stroke();
+        }
+
+        // 立方体（机など）を描く
+        // width, depth: グリッド何個分か / height: 高さ倍率
+        function drawCube(gx, gy, width, depth, height, colorTop, colorSide) {
+            // 3つの面（上、右下、左下）を描いて立体に見せる
+
+            // 底面の4隅
+            const p1 = toScreen(gx, gy, 0);
+            const p2 = toScreen(gx + width, gy, 0);
+            const p3 = toScreen(gx + width, gy + depth, 0);
+            const p4 = toScreen(gx, gy + depth, 0);
+
+            // 上面の4隅（高さZを加える）
+            const h = height;
+            const t1 = toScreen(gx, gy, h);
+            const t2 = toScreen(gx + width, gy, h);
+            const t3 = toScreen(gx + width, gy + depth, h);
+            const t4 = toScreen(gx, gy + depth, h);
+
+            // 1. 左下の面を描く
+            ctx.fillStyle = colorSide; // 少し暗い色
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p4.x, p4.y); ctx.lineTo(t4.x, t4.y); ctx.lineTo(t1.x, t1.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+
+            // 2. 右下の面を描く
+            ctx.fillStyle = colorSide; // 少し暗い色
+            ctx.beginPath();
+            ctx.moveTo(p4.x, p4.y); ctx.lineTo(p3.x, p3.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+            
+            // 3. 上面を描く（一番明るい色）
+            ctx.fillStyle = colorTop;
+            ctx.beginPath();
+            ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+
+        // ==========================================
+        // 🔄 メインループ（描画実行）
+        // ==========================================
+        function drawMap() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 画面クリア
+
+            // 1. グリッド床を描く
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    drawTile(x, y);
+                }
+            }
+
+            // 2. 机を描く
+            // グリッド(deskX, deskY)の位置に、幅3x奥行2x高さ1.5 の机を置く
+            drawCube(deskX, deskY, 3, 2, 1.5, '#8e44ad', '#6c3483'); // 紫色の机
+        }
+
+        // 最初の描画を実行
+        drawMap();
+
+    </script>
+</body>
+</html>
