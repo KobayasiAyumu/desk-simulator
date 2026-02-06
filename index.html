@@ -3,198 +3,359 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Desk Setup Simulator (Interactive)</title>
+    <title>Desk Setup Simulator (Q to Clear)</title>
     <style>
         body {
-            background-color: #222;
+            background-color: #1a1a1a;
             color: #eee;
             display: flex;
             flex-direction: column;
             align-items: center;
-            font-family: sans-serif;
-            user-select: none; /* 文字選択を防止 */
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            user-select: none;
+            overflow: hidden;
         }
+        h1 { margin: 10px 0; font-size: 1.5rem; }
+        
         canvas {
-            border: 2px solid #555;
-            background-color: #333;
+            background-color: #2d2d2d;
             border-radius: 4px;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
-            cursor: none; /* OSのカーソルを消す（自前のカーソルを表示するため） */
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            cursor: none;
         }
-        .controls { margin-top: 10px; padding: 10px; background: #444; border-radius: 8px; }
+
+        .ui-panel {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            background: #333;
+            padding: 10px;
+            border-radius: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 800px;
+        }
+        
+        .item-btn {
+            background: #444;
+            border: 1px solid #555;
+            color: #ddd;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        .item-btn:hover { background: #555; color: white; }
+        .item-btn.active { background: #3498db; border-color: #2980b9; color: white; }
+        .item-btn.action { background: #e67e22; border-color: #d35400; color: white; }
+
+        .control-info { margin-top: 10px; font-size: 0.9rem; color: #888; }
+        kbd { background: #eee; color: #333; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
     </style>
 </head>
 <body>
 
-    <h1>🖱️ Click to Move Desk</h1>
-    <canvas id="isoCanvas" width="800" height="600"></canvas>
+    <h1>🖥️ Desk Setup Simulator</h1>
+    <canvas id="isoCanvas" width="800" height="500"></canvas>
     
-    <div class="controls">
-        <p>マウスを動かして位置を決め、クリックして配置！</p>
+    <div class="ui-panel" id="toolbar"></div>
+    <div class="control-info">
+        <kbd>R</kbd>: 家具回転 / <kbd>V</kbd>: 視点変更 / <kbd>Click</kbd>: 配置 / <kbd>Q</kbd>: 全削除
     </div>
 
     <script>
         const canvas = document.getElementById('isoCanvas');
         const ctx = canvas.getContext('2d');
 
-        // === 設定値 ===
-        const GRID_SIZE = 10;
+        // === 設定 ===
+        const GRID_SIZE = 12;
         const TILE_WIDTH = 60;
         const TILE_HEIGHT = 30;
         const ORIGIN_X = canvas.width / 2;
-        const ORIGIN_Y = 150;
+        const ORIGIN_Y = 100;
 
-        // 机の位置
-        let deskX = 2;
-        let deskY = 3;
+        // === カタログ ===
+        const CATALOG = [
+            { id: 'desk', name: 'Desk', w: 3, d: 2, h: 1.5, z: 0, color: '#9b59b6' },
+            { id: 'monitor', name: 'Monitor', w: 0.2, d: 1.5, h: 1.0, z: 1.5, color: '#2c3e50' },
+            { id: 'keyboard', name: 'Keyboard', w: 0.8, d: 0.3, h: 0.1, z: 1.5, color: '#ecf0f1' },
+            { id: 'pc', name: 'PC Case', w: 0.5, d: 1, h: 1.2, z: 0, color: '#e74c3c' },
+            { id: 'speaker', name: 'Speaker', w: 0.5, d: 0.5, h: 0.8, z: 0, color: '#f1c40f' },
+            { id: 'plant', name: 'Plant', w: 0.6, d: 0.6, h: 1.0, z: 0, color: '#2ecc71' }
+        ];
 
-        // マウスが今乗っているグリッドの位置
+        let placedItems = [];
+        let selectedItemId = 'desk';
+        let itemRotation = 0;
+        let viewAngle = 0;
         let hoverX = -1;
         let hoverY = -1;
 
-        // ==========================================
-        // 📐 座標変換 (Grid <-> Screen)
-        // ==========================================
-        
-        // グリッド -> 画面 (前回と同じ)
-        function toScreen(gx, gy, gz = 0) {
+        function init() {
+            createToolbar();
+            drawLoop();
+        }
+
+        function createToolbar() {
+            const toolbar = document.getElementById('toolbar');
+            
+            const viewBtn = document.createElement('button');
+            viewBtn.className = 'item-btn action';
+            viewBtn.innerText = '🎥 View (V)';
+            viewBtn.onclick = rotateView;
+            toolbar.appendChild(viewBtn);
+
+            CATALOG.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'item-btn';
+                if(item.id === selectedItemId) btn.classList.add('active');
+                btn.innerText = item.name;
+                btn.onclick = () => {
+                    selectedItemId = item.id;
+                    document.querySelectorAll('.item-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                };
+                toolbar.appendChild(btn);
+            });
+            
+            const rotBtn = document.createElement('button');
+            rotBtn.className = 'item-btn';
+            rotBtn.innerText = '🔄 Rotate (R)';
+            rotBtn.onclick = rotateCurrentItem;
+            toolbar.appendChild(rotBtn);
+        }
+
+        // === 色の明暗計算 ===
+        function adjustColor(hex, percent) {
+            hex = hex.replace(/^\s*#|\s*$/g, '');
+            if (hex.length === 3) hex = hex.replace(/(.)/g, '$1$1');
+
+            let r = parseInt(hex.substr(0, 2), 16);
+            let g = parseInt(hex.substr(2, 2), 16);
+            let b = parseInt(hex.substr(4, 2), 16);
+
+            if (percent > 0) {
+                r += (255 - r) * percent;
+                g += (255 - g) * percent;
+                b += (255 - b) * percent;
+            } else {
+                r += r * percent;
+                g += g * percent;
+                b += b * percent;
+            }
+            
+            r = Math.min(255, Math.max(0, Math.round(r)));
+            g = Math.min(255, Math.max(0, Math.round(g)));
+            b = Math.min(255, Math.max(0, Math.round(b)));
+
+            const RR = r.toString(16).padStart(2, '0');
+            const GG = g.toString(16).padStart(2, '0');
+            const BB = b.toString(16).padStart(2, '0');
+
+            return `#${RR}${GG}${BB}`;
+        }
+
+        // === 座標計算 ===
+        function worldToView(wx, wy) {
+            let vx = wx;
+            let vy = wy;
+            for (let i = 0; i < viewAngle; i++) {
+                const oldX = vx;
+                const oldY = vy;
+                vx = GRID_SIZE - 1 - oldY;
+                vy = oldX;
+            }
+            return { x: vx, y: vy };
+        }
+
+        function viewToWorld(vx, vy) {
+            let wx = vx;
+            let wy = vy;
+            const reverseRotations = (4 - viewAngle) % 4;
+            for (let i = 0; i < reverseRotations; i++) {
+                const oldX = wx;
+                const oldY = wy;
+                wx = GRID_SIZE - 1 - oldY;
+                wy = oldX;
+            }
+            return { x: wx, y: wy };
+        }
+
+        function gridToScreen(gx, gy, gz) {
             const screenX = ORIGIN_X + (gx - gy) * (TILE_WIDTH / 2);
             const screenY = ORIGIN_Y + (gx + gy) * (TILE_HEIGHT / 2) - (gz * TILE_HEIGHT);
             return { x: screenX, y: screenY };
         }
 
-        // 画面 -> グリッド (★今回の新兵器：逆変換)
-        function toGrid(screenX, screenY) {
-            // 原点からのズレを計算
+        function screenToGrid(screenX, screenY) {
             const adjX = screenX - ORIGIN_X;
             const adjY = screenY - ORIGIN_Y;
-
-            // 連立方程式を解いて gridX, gridY を導き出す
-            // (詳細な数学的説明は省きますが、これがアイソメトリックの逆計算式です)
             const gy = (adjY / (TILE_HEIGHT / 2) - adjX / (TILE_WIDTH / 2)) / 2;
             const gx = (adjY / (TILE_HEIGHT / 2) + adjX / (TILE_WIDTH / 2)) / 2;
-
             return { x: Math.floor(gx), y: Math.floor(gy) };
         }
 
-        // ==========================================
-        // 🎮 マウスイベント処理
-        // ==========================================
-
-        // マウスが動いた時
+        // === イベント ===
         canvas.addEventListener('mousemove', (e) => {
-            // Canvas内でのマウス座標を取得
             const rect = canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            // 画面座標をグリッド座標に変換
-            const gridPos = toGrid(mouseX, mouseY);
-            
-            // グリッドの外にはみ出していないかチェック
-            if (gridPos.x >= 0 && gridPos.x < GRID_SIZE && 
-                gridPos.y >= 0 && gridPos.y < GRID_SIZE) {
-                hoverX = gridPos.x;
-                hoverY = gridPos.y;
+            const viewPos = screenToGrid(e.clientX - rect.left, e.clientY - rect.top);
+            if (viewPos.x >= 0 && viewPos.x < GRID_SIZE && viewPos.y >= 0 && viewPos.y < GRID_SIZE) {
+                const worldPos = viewToWorld(viewPos.x, viewPos.y);
+                hoverX = worldPos.x;
+                hoverY = worldPos.y;
             } else {
                 hoverX = -1;
                 hoverY = -1;
             }
-            
-            // 画面を再描画
-            drawMap();
         });
 
-        // クリックした時
         canvas.addEventListener('click', () => {
-            // カーソルが有効な位置にあれば、そこに机を移動
-            if (hoverX !== -1 && hoverY !== -1) {
-                deskX = hoverX;
-                deskY = hoverY;
-                drawMap();
+            if (hoverX !== -1) {
+                const template = CATALOG.find(i => i.id === selectedItemId);
+                let w = itemRotation === 0 ? template.w : template.d;
+                let d = itemRotation === 0 ? template.d : template.w;
+                placedItems.push({
+                    ...template,
+                    x: hoverX, y: hoverY, w: w, d: d, rot: itemRotation
+                });
             }
         });
 
-        // ==========================================
-        // 🎨 描画関数
-        // ==========================================
-
-        function drawTile(gx, gy, color = null) {
-            const top = toScreen(gx, gy, 0);
-            const right = toScreen(gx + 1, gy, 0);
-            const bottom = toScreen(gx + 1, gy + 1, 0);
-            const left = toScreen(gx, gy + 1, 0);
-
-            ctx.beginPath();
-            ctx.moveTo(top.x, top.y);
-            ctx.lineTo(right.x, right.y);
-            ctx.lineTo(bottom.x, bottom.y);
-            ctx.lineTo(left.x, left.y);
-            ctx.closePath();
-
-            // 引数で色が指定されていればそれを使う（ハイライト用）
-            if (color) {
-                ctx.fillStyle = color;
-            } else {
-                ctx.fillStyle = (gx + gy) % 2 === 0 ? '#555' : '#444';
+        // ★★★ ここを変更しました！ ★★★
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') rotateCurrentItem();
+            if (e.key === 'v' || e.key === 'V') rotateView();
+            
+            // Qキーで全削除
+            if (e.key === 'q' || e.key === 'Q') {
+                placedItems = [];
             }
-            
-            ctx.fill();
-            ctx.strokeStyle = '#666';
-            ctx.stroke();
-        }
+        });
 
-        function drawCube(gx, gy, width, depth, height, colorTop, colorSide) {
-            const p1 = toScreen(gx, gy, 0);
-            const p4 = toScreen(gx, gy + depth, 0);
-            const p3 = toScreen(gx + width, gy + depth, 0);
-            
-            const h = height;
-            const t1 = toScreen(gx, gy, h);
-            const t2 = toScreen(gx + width, gy, h);
-            const t3 = toScreen(gx + width, gy + depth, h);
-            const t4 = toScreen(gx, gy + depth, h);
+        function rotateCurrentItem() { itemRotation = (itemRotation === 0) ? 1 : 0; }
+        function rotateView() { viewAngle = (viewAngle + 1) % 4; }
 
-            // 左側面
-            ctx.fillStyle = colorSide;
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p4.x, p4.y); ctx.lineTo(t4.x, t4.y); ctx.lineTo(t1.x, t1.y);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-
-            // 右側面
-            ctx.fillStyle = colorSide;
-            ctx.beginPath();
-            ctx.moveTo(p4.x, p4.y); ctx.lineTo(p3.x, p3.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-            
-            // 上面
-            ctx.fillStyle = colorTop;
-            ctx.beginPath();
-            ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
-        }
-
-        function drawMap() {
+        // === 描画ループ ===
+        function drawLoop() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. 床を描く
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    // もしマウスが乗っている場所なら、黄色く塗る
-                    if (x === hoverX && y === hoverY) {
-                        drawTile(x, y, 'rgba(255, 235, 59, 0.6)'); // 半透明の黄色
-                    } else {
-                        drawTile(x, y);
-                    }
+            // 床
+            for (let vy = 0; vy < GRID_SIZE; vy++) {
+                for (let vx = 0; vx < GRID_SIZE; vx++) {
+                    drawTile(vx, vy);
                 }
             }
 
-            // 2. 机を描く
-            drawCube(deskX, deskY, 3, 2, 1.5, '#8e44ad', '#6c3483');
+            let renderList = [];
+            placedItems.forEach(item => {
+                const vPos = worldToView(item.x, item.y);
+                let vW = (viewAngle % 2 === 0) ? item.w : item.d;
+                let vD = (viewAngle % 2 === 0) ? item.d : item.w;
+                renderList.push({ ...item, vx: vPos.x, vy: vPos.y, vw: vW, vd: vD, isGhost: false });
+            });
+
+            if (hoverX !== -1) {
+                const template = CATALOG.find(i => i.id === selectedItemId);
+                let rawW = itemRotation === 0 ? template.w : template.d;
+                let rawD = itemRotation === 0 ? template.d : template.w;
+                const vPos = worldToView(hoverX, hoverY);
+                let vW = (viewAngle % 2 === 0) ? rawW : rawD;
+                let vD = (viewAngle % 2 === 0) ? rawD : rawW;
+                renderList.push({ ...template, vx: vPos.x, vy: vPos.y, vw: vW, vd: vD, isGhost: true });
+            }
+
+            renderList.sort((a, b) => {
+                const depthA = a.vx + a.vy;
+                const depthB = b.vx + b.vy;
+                if (depthA !== depthB) return depthA - depthB;
+                return a.z - b.z;
+            });
+
+            renderList.forEach(item => {
+                const alpha = item.isGhost ? 0.6 : 1.0;
+                drawSolidCube(item.vx, item.vy, item.z, item.vw, item.vd, item.h, item.color, alpha, item.isGhost);
+            });
+
+            requestAnimationFrame(drawLoop);
         }
 
-        drawMap();
+        // === 描画関数 ===
+        function drawTile(vx, vy) {
+            const p = [
+                gridToScreen(vx, vy, 0),
+                gridToScreen(vx+1, vy, 0),
+                gridToScreen(vx+1, vy+1, 0),
+                gridToScreen(vx, vy+1, 0)
+            ];
+            
+            const worldPos = viewToWorld(vx, vy);
+            const isHover = (worldPos.x === hoverX && worldPos.y === hoverY);
 
+            ctx.beginPath();
+            ctx.moveTo(p[0].x, p[0].y);
+            ctx.lineTo(p[1].x, p[1].y);
+            ctx.lineTo(p[2].x, p[2].y);
+            ctx.lineTo(p[3].x, p[3].y);
+            ctx.closePath();
+
+            ctx.fillStyle = (vx + vy) % 2 === 0 ? '#3a3a3a' : '#333'; 
+            if(isHover) ctx.fillStyle = '#555';
+
+            ctx.fill();
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function drawSolidCube(vx, vy, vz, w, d, h, baseColor, alpha, isGhost) {
+            ctx.globalAlpha = alpha;
+            
+            const p0 = gridToScreen(vx, vy, vz);
+            const p1 = gridToScreen(vx+w, vy, vz);
+            const p2 = gridToScreen(vx+w, vy+d, vz);
+            const p3 = gridToScreen(vx, vy+d, vz);
+
+            const t0 = gridToScreen(vx, vy, vz+h);
+            const t1 = gridToScreen(vx+w, vy, vz+h);
+            const t2 = gridToScreen(vx+w, vy+d, vz+h);
+            const t3 = gridToScreen(vx, vy+d, vz+h);
+
+            const topColor = adjustColor(baseColor, 0.4);
+            const rightColor = baseColor;
+            const leftColor = adjustColor(baseColor, -0.2);
+
+            const strokeColor = isGhost ? '#ffff00' : '#111';
+            const lineWidth = isGhost ? 2 : 1;
+
+            ctx.lineWidth = lineWidth;
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = strokeColor;
+
+            ctx.fillStyle = leftColor;
+            ctx.beginPath();
+            ctx.moveTo(p3.x, p3.y); ctx.lineTo(p0.x, p0.y); ctx.lineTo(t0.x, t0.y); ctx.lineTo(t3.x, t3.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+
+            ctx.fillStyle = rightColor;
+            ctx.beginPath();
+            ctx.moveTo(p2.x, p2.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+
+            ctx.fillStyle = topColor;
+            ctx.beginPath();
+            ctx.moveTo(t0.x, t0.y); ctx.lineTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+
+            if(isGhost) {
+                ctx.strokeStyle = 'yellow';
+                ctx.strokeRect(0,0,0,0); 
+            }
+
+            ctx.globalAlpha = 1.0;
+        }
+
+        init();
     </script>
 </body>
 </html>
