@@ -3,38 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Desk Setup Simulator (Iso Ver.)</title>
+    <title>Desk Setup Simulator (Interactive)</title>
     <style>
         body {
-            background-color: #222; /* ゲーマーっぽく暗い背景 */
+            background-color: #222;
             color: #eee;
             display: flex;
             flex-direction: column;
             align-items: center;
             font-family: sans-serif;
+            user-select: none; /* 文字選択を防止 */
         }
         canvas {
             border: 2px solid #555;
-            background-color: #333; /* 床の背景色 */
+            background-color: #333;
             border-radius: 4px;
             box-shadow: 0 10px 20px rgba(0,0,0,0.5);
-            cursor: crosshair; /* 十字カーソル */
+            cursor: none; /* OSのカーソルを消す（自前のカーソルを表示するため） */
         }
-        .controls {
-            margin-top: 10px;
-            padding: 10px;
-            background: #444;
-            border-radius: 8px;
-        }
+        .controls { margin-top: 10px; padding: 10px; background: #444; border-radius: 8px; }
     </style>
 </head>
 <body>
 
-    <h1>🖥️ My Desk Setup (Alpha)</h1>
+    <h1>🖱️ Click to Move Desk</h1>
     <canvas id="isoCanvas" width="800" height="600"></canvas>
     
     <div class="controls">
-        <p>まだ操作はできません。コード内の座標を変えると机が動きます。</p>
+        <p>マウスを動かして位置を決め、クリックして配置！</p>
     </div>
 
     <script>
@@ -42,36 +38,88 @@
         const ctx = canvas.getContext('2d');
 
         // === 設定値 ===
-        const GRID_SIZE = 10;       // グリッドのマス目 (10x10)
-        const TILE_WIDTH = 60;      // タイル1枚の横幅 (ピクセル)
-        const TILE_HEIGHT = 30;     // タイル1枚の縦幅 (ピクセル)
-        
-        // Canvasの中央を原点(0,0)にするためのオフセット（ずらし量）
+        const GRID_SIZE = 10;
+        const TILE_WIDTH = 60;
+        const TILE_HEIGHT = 30;
         const ORIGIN_X = canvas.width / 2;
-        const ORIGIN_Y = 150; // 少し上に配置
+        const ORIGIN_Y = 150;
 
-        // 机を置く位置（グリッド座標）★ここを変えると場所が変わる！
-        let deskX = 0;
-        let deskY = 8;
+        // 机の位置
+        let deskX = 2;
+        let deskY = 3;
+
+        // マウスが今乗っているグリッドの位置
+        let hoverX = -1;
+        let hoverY = -1;
 
         // ==========================================
-        // 📐 核心：座標変換関数 (Iso -> Screen)
+        // 📐 座標変換 (Grid <-> Screen)
         // ==========================================
-        // グリッド上の座標(x, y, z)を受け取り、
-        // Canvas上の描画座標{x, y}を返す魔法の関数
-        function toScreen(gridX, gridY, gridZ = 0) {
-            const screenX = ORIGIN_X + (gridX - gridY) * (TILE_WIDTH / 2);
-            const screenY = ORIGIN_Y + (gridX + gridY) * (TILE_HEIGHT / 2) - (gridZ * TILE_HEIGHT);
+        
+        // グリッド -> 画面 (前回と同じ)
+        function toScreen(gx, gy, gz = 0) {
+            const screenX = ORIGIN_X + (gx - gy) * (TILE_WIDTH / 2);
+            const screenY = ORIGIN_Y + (gx + gy) * (TILE_HEIGHT / 2) - (gz * TILE_HEIGHT);
             return { x: screenX, y: screenY };
         }
 
+        // 画面 -> グリッド (★今回の新兵器：逆変換)
+        function toGrid(screenX, screenY) {
+            // 原点からのズレを計算
+            const adjX = screenX - ORIGIN_X;
+            const adjY = screenY - ORIGIN_Y;
+
+            // 連立方程式を解いて gridX, gridY を導き出す
+            // (詳細な数学的説明は省きますが、これがアイソメトリックの逆計算式です)
+            const gy = (adjY / (TILE_HEIGHT / 2) - adjX / (TILE_WIDTH / 2)) / 2;
+            const gx = (adjY / (TILE_HEIGHT / 2) + adjX / (TILE_WIDTH / 2)) / 2;
+
+            return { x: Math.floor(gx), y: Math.floor(gy) };
+        }
+
         // ==========================================
-        // 🎨 描画関数群
+        // 🎮 マウスイベント処理
         // ==========================================
 
-        // 1枚のタイル（床）を描く
-        function drawTile(gx, gy) {
-            // タイルの4隅の座標を計算
+        // マウスが動いた時
+        canvas.addEventListener('mousemove', (e) => {
+            // Canvas内でのマウス座標を取得
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // 画面座標をグリッド座標に変換
+            const gridPos = toGrid(mouseX, mouseY);
+            
+            // グリッドの外にはみ出していないかチェック
+            if (gridPos.x >= 0 && gridPos.x < GRID_SIZE && 
+                gridPos.y >= 0 && gridPos.y < GRID_SIZE) {
+                hoverX = gridPos.x;
+                hoverY = gridPos.y;
+            } else {
+                hoverX = -1;
+                hoverY = -1;
+            }
+            
+            // 画面を再描画
+            drawMap();
+        });
+
+        // クリックした時
+        canvas.addEventListener('click', () => {
+            // カーソルが有効な位置にあれば、そこに机を移動
+            if (hoverX !== -1 && hoverY !== -1) {
+                deskX = hoverX;
+                deskY = hoverY;
+                drawMap();
+            }
+        });
+
+        // ==========================================
+        // 🎨 描画関数
+        // ==========================================
+
+        function drawTile(gx, gy, color = null) {
             const top = toScreen(gx, gy, 0);
             const right = toScreen(gx + 1, gy, 0);
             const bottom = toScreen(gx + 1, gy + 1, 0);
@@ -84,69 +132,67 @@
             ctx.lineTo(left.x, left.y);
             ctx.closePath();
 
-            // 色設定（チェッカー柄にして分かりやすくする）
-            ctx.fillStyle = (gx + gy) % 2 === 0 ? '#555' : '#444';
+            // 引数で色が指定されていればそれを使う（ハイライト用）
+            if (color) {
+                ctx.fillStyle = color;
+            } else {
+                ctx.fillStyle = (gx + gy) % 2 === 0 ? '#555' : '#444';
+            }
+            
             ctx.fill();
-            ctx.strokeStyle = '#666'; // 枠線
+            ctx.strokeStyle = '#666';
             ctx.stroke();
         }
 
-        // 立方体（机など）を描く
-        // width, depth: グリッド何個分か / height: 高さ倍率
         function drawCube(gx, gy, width, depth, height, colorTop, colorSide) {
-            // 3つの面（上、右下、左下）を描いて立体に見せる
-
-            // 底面の4隅
             const p1 = toScreen(gx, gy, 0);
-            const p2 = toScreen(gx + width, gy, 0);
-            const p3 = toScreen(gx + width, gy + depth, 0);
             const p4 = toScreen(gx, gy + depth, 0);
-
-            // 上面の4隅（高さZを加える）
+            const p3 = toScreen(gx + width, gy + depth, 0);
+            
             const h = height;
             const t1 = toScreen(gx, gy, h);
             const t2 = toScreen(gx + width, gy, h);
             const t3 = toScreen(gx + width, gy + depth, h);
             const t4 = toScreen(gx, gy + depth, h);
 
-            // 1. 左下の面を描く
-            ctx.fillStyle = colorSide; // 少し暗い色
+            // 左側面
+            ctx.fillStyle = colorSide;
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y); ctx.lineTo(p4.x, p4.y); ctx.lineTo(t4.x, t4.y); ctx.lineTo(t1.x, t1.y);
             ctx.closePath(); ctx.fill(); ctx.stroke();
 
-            // 2. 右下の面を描く
-            ctx.fillStyle = colorSide; // 少し暗い色
+            // 右側面
+            ctx.fillStyle = colorSide;
             ctx.beginPath();
             ctx.moveTo(p4.x, p4.y); ctx.lineTo(p3.x, p3.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
             ctx.closePath(); ctx.fill(); ctx.stroke();
             
-            // 3. 上面を描く（一番明るい色）
+            // 上面
             ctx.fillStyle = colorTop;
             ctx.beginPath();
             ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y);
             ctx.closePath(); ctx.fill(); ctx.stroke();
         }
 
-        // ==========================================
-        // 🔄 メインループ（描画実行）
-        // ==========================================
         function drawMap() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height); // 画面クリア
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. グリッド床を描く
+            // 1. 床を描く
             for (let y = 0; y < GRID_SIZE; y++) {
                 for (let x = 0; x < GRID_SIZE; x++) {
-                    drawTile(x, y);
+                    // もしマウスが乗っている場所なら、黄色く塗る
+                    if (x === hoverX && y === hoverY) {
+                        drawTile(x, y, 'rgba(255, 235, 59, 0.6)'); // 半透明の黄色
+                    } else {
+                        drawTile(x, y);
+                    }
                 }
             }
 
             // 2. 机を描く
-            // グリッド(deskX, deskY)の位置に、幅3x奥行2x高さ1.5 の机を置く
-            drawCube(deskX, deskY, 3, 2, 1.5, '#8e44ad', '#6c3483'); // 紫色の机
+            drawCube(deskX, deskY, 3, 2, 1.5, '#8e44ad', '#6c3483');
         }
 
-        // 最初の描画を実行
         drawMap();
 
     </script>
